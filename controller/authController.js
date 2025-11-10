@@ -7,6 +7,7 @@ import { sendEmail } from "../utils/sendEmail.js";
 
 export const register = async (req, res) => {
   try {
+      console.log(" Register API call - starting registration flow");
     const { name, email, password } = req.body;
 
     if (!name)

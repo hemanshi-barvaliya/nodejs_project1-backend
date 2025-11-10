@@ -6,7 +6,8 @@ let io = null;
 export const initIO = (server) => {
   io = new Server(server, {
     cors: {
-      origin: "https://nodejs-project1-backend.onrender.com/",
+      origin: "https://nodejs-project1-backend.onrender.com",
+      // origin: "http://localhost:5000",
       methods: ["GET", "POST"],
       credentials: true,
     },
