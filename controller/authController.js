@@ -30,6 +30,8 @@ export const register = async (req, res) => {
       imagePath = `/uploads/${req.file.filename}`;
     }
 
+    await sendEmail(email, "Verify your OTP", `Your OTP is ${otp}`);
+    
     const user = await User.create({
       name,
       email,
@@ -39,7 +41,6 @@ export const register = async (req, res) => {
       image: imagePath, // 👈 store image path
     });
 
-    await sendEmail(email, "Verify your OTP", `Your OTP is ${otp}`);
     res.json({
       message: "Registered successfully. Please verify OTP sent to email.",
       user: {
