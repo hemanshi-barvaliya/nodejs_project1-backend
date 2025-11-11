@@ -1,9 +1,12 @@
+import dotenv from "dotenv";
+dotenv.config();
+
 import express from "express";
 import http from "http";
 import mongoose from "mongoose";
 import cors from "cors";
-import dotenv from "dotenv";
-import path from "path";
+
+// import path from "path";
 
 import connectDB from "./config/db.js";
 import authRouter from "./routes/authRoutes.js";
@@ -13,7 +16,6 @@ import setupSocket from "./setupSocket.js";
 import upload from "./middleware/upload.js";
 import { v2 as cloudinary } from "cloudinary";
 
-dotenv.config();
 
 
 connectDB();
@@ -28,10 +30,9 @@ cloudinary.config({
   secure: true
 });
 
-
 app.use(cors());
 app.use(express.json());
-app.use("/uploads", express.static(path.join(path.resolve(), "uploads")));
+// app.use("/uploads", express.static(path.join(path.resolve(), "uploads")));
 
 
 const testUrl = cloudinary.url('1762408928201-699628717_v5xumw');
@@ -39,9 +40,8 @@ console.log("Test Cloudinary URL:", testUrl);
 
 app.post("/api/upload", upload.single("image"), async (req, res) => {
   try {
-    const result = await cloudinary.uploader.upload(req.file.path, {
-      folder: "myapp", 
-    });
+    const result = await cloudinary.uploader.upload(req.file.path);
+    console.log(result);
     res.json({ url: result.secure_url });
   } catch (err) {
     console.error(err);

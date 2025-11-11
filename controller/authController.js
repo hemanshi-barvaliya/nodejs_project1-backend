@@ -4,6 +4,8 @@ import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import { generateOTP } from "../utils/generateOTP.js";
 import { sendEmail } from "../utils/sendEmail.js";
+import { v2 as cloudinary } from "cloudinary";
+import fs from "fs/promises";
 
 export const register = async (req, res) => {
   try {
@@ -25,10 +27,14 @@ export const register = async (req, res) => {
     const otp = generateOTP();
 
     // 👇 handle uploaded image (if provided)
-    let imagePath = "";
+    let imageUrl = "";
     if (req.file) {
-      imagePath = `/uploads/${req.file.filename}`;
+      const result = await cloudinary.uploader.upload(req.file.path);
+      imageUrl = result.secure_url;
+
+      await fs.unlink(req.file.path);
     }
+
 
     await sendEmail(email, "Verify your OTP", `Your OTP is ${otp}`);
     
@@ -38,7 +44,7 @@ export const register = async (req, res) => {
       password: hashed,
       otp,
       otpExpires: Date.now() + 10 * 60 * 1000,
-      image: imagePath, // 👈 store image path
+      image: imageUrl, // 👈 store image path
     });
 
     res.json({

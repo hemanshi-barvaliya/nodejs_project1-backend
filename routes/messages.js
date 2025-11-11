@@ -5,8 +5,15 @@ import fs from "fs";
 import Message from "../models/Message.js";
 import User from "../models/User.js";
 import { getIO } from "../socketInstance.js";
+import { v2 as cloudinary } from "cloudinary";
 
 const router = express.Router();
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 // Ensure upload directory exists
 const uploadDir = "uploads/messages";
@@ -44,6 +51,23 @@ function fileFilter(req, file, cb) {
 
 const upload = multer({ storage, fileFilter });
 
+const uploadToCloudinary = async (filePath, folder = "chat_uploads") => {
+  try {
+    const result = await cloudinary.uploader.upload(filePath, {
+      folder,
+      resource_type: "auto", // ✅ ensures images, PDFs, ZIPs all work
+    });
+
+    // Remove local file after successful upload
+    await fs.promises.unlink(filePath);
+    return result.secure_url;
+  } catch (err) {
+    console.error("❌ Cloudinary upload failed:", err.message);
+    throw new Error("Cloudinary upload failed");
+  }
+};
+
+
 router.post("/", upload.single("attachment"), async (req, res) => {
   try {
     const { from, to, content } = req.body;
@@ -53,19 +77,30 @@ router.post("/", upload.single("attachment"), async (req, res) => {
       return res.status(400).json({ message: "Missing sender or receiver ID" });
     }
 
-    const filePath = req.file ? `/uploads/messages/${req.file.filename}` : "";
-    if (!content && !filePath) {
+    let imageUrl = "";
+    let fileUrl = "";
+    let isImage = false;
+
+    // ✅ Upload attachment if present
+    if (req.file) {
+      isImage = req.file.mimetype.startsWith("image/");
+      const uploadedUrl = await uploadToCloudinary(req.file.path);
+      if (isImage) imageUrl = uploadedUrl;
+      else fileUrl = uploadedUrl;
+    }
+
+    // ✅ Validate: must have text or file
+    if (!content && !req.file) {
       return res.status(400).json({ message: "Message content or attachment required" });
     }
 
-    const isImage = req.file && req.file.mimetype.startsWith("image/");
-
+    // ✅ Create and populate message
     const message = await Message.create({
       from,
       to,
       content: content || "",
-      image: isImage ? filePath : "",
-      file: !isImage ? filePath : "",
+      image: isImage ? imageUrl : "",
+      file: !isImage ? fileUrl : "",
       createdAt: new Date(),
     });
 
@@ -74,16 +109,15 @@ router.post("/", upload.single("attachment"), async (req, res) => {
       { path: "to", select: "name username" },
     ]);
 
-    const baseURL = `${req.protocol}://${req.get("host")}`;
+    // ✅ No need to prefix baseURL for Cloudinary URLs
     const formattedMsg = {
       ...message.toObject(),
-      image: message.image ? `${baseURL}${message.image}` : "",
-      file: message.file ? `${baseURL}${message.file}` : "",
     };
 
+    // ✅ Emit real-time event
     if (io) {
       io.to(to.toString()).emit("private_message", formattedMsg);
-      io.to(from.toString()).emit("private_message", formattedMsg);
+      // io.to(from.toString()).emit("private_message", formattedMsg);
     }
 
     res.status(201).json(formattedMsg);
@@ -92,6 +126,7 @@ router.post("/", upload.single("attachment"), async (req, res) => {
     res.status(500).json({ message: "Internal Server Error", error: error.message });
   }
 });
+
 
 router.post("/multiple", upload.array("attachments", 10), async (req, res) => {
   try {
@@ -107,39 +142,36 @@ router.post("/multiple", upload.array("attachments", 10), async (req, res) => {
       return res.status(400).json({ message: "No attachments or content provided" });
     }
 
-    const baseURL = `${req.protocol}://${req.get("host")}`;
     const messages = [];
 
-    // ✅ If text message included
-    if (content && content.trim() !== "") {
+    // ✅ Handle text message (if any)
+    if (content?.trim()) {
       const textMsg = await Message.create({
         from,
         to,
         content,
         createdAt: new Date(),
       });
+
       await textMsg.populate([
         { path: "from", select: "name username" },
         { path: "to", select: "name username" },
       ]);
 
-      const formatted = {
-        ...textMsg.toObject(),
-        image: "",
-        file: "",
-      };
-      messages.push(formatted);
+      messages.push(textMsg);
     }
 
-    // ✅ Handle each attachment
+    // ✅ Upload files one by one to Cloudinary
     for (const file of files) {
       const isImage = file.mimetype.startsWith("image/");
+      const uploadedUrl = await uploadToCloudinary(file.path, "chat_uploads");
+
       const msg = await Message.create({
         from,
         to,
         content: "",
-        image: isImage ? `/uploads/messages/${file.filename}` : "",
-        file: !isImage ? `/uploads/messages/${file.filename}` : "",
+        image: isImage ? uploadedUrl : "",
+        file: !isImage ? uploadedUrl : "",
         createdAt: new Date(),
       });
 
@@ -148,44 +180,47 @@ router.post("/multiple", upload.array("attachments", 10), async (req, res) => {
         { path: "to", select: "name username" },
       ]);
 
-      const formatted = {
-        ...msg.toObject(),
-        image: msg.image ? `${baseURL}${msg.image}` : "",
-        file: msg.file ? `${baseURL}${msg.file}` : "",
-      };
-      messages.push(formatted);
+      messages.push(msg);
     }
 
-    // ✅ Emit all messages
+    // ✅ Emit messages in real-time (socket.io)
     if (io) {
       messages.forEach((m) => {
         io.to(to.toString()).emit("private_message", m);
         // io.to(from.toString()).emit("private_message", m);
       });
-
-      // ✅ Handle delivery status for attachments
-      const receiver = await User.findById(to);
-      if (receiver?.online && receiver?.socketId) {
-        // Mark messages as delivered
-        await Message.updateMany(
-          { _id: { $in: messages.map(m => m._id) }, to },
-          { $set: { delivered: true } }
-        );
-
-        // Emit delivered events
-        messages.forEach((m) => {
-          io.to(from.toString()).emit("message_delivered", m._id);
-          io.to(to.toString()).emit("message_delivered", m._id);
-        });
-      }
     }
 
     res.status(201).json(messages);
   } catch (error) {
     console.error("❌ Error saving multiple attachments:", error);
+    res
+      .status(500)
+      .json({ message: "Internal Server Error", error: error.message });
+  }
+});
+
+
+// ------------------- FETCH MESSAGES -------------------
+router.get("/:userId/:contactId", async (req, res) => {
+  try {
+    const { userId, contactId } = req.params;
+
+    const messages = await Message.find({
+      $or: [{ from: userId, to: contactId }, { from: contactId, to: userId }],
+    })
+      .populate("from", "name username")
+      .populate("to", "name username")
+      .sort({ createdAt: 1 })
+      .lean();
+
+    res.json(messages);
+  } catch (error) {
+    console.error("❌ Error fetching messages:", error);
     res.status(500).json({ message: "Internal Server Error", error: error.message });
   }
 });
+
 
 /* -------------------- FETCH MESSAGES -------------------- */
 router.get("/:userId/:contactId", async (req, res) => {
