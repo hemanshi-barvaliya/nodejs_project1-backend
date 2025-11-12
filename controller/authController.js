@@ -11,7 +11,7 @@ import fs from "fs/promises";
 // ------------------------
 export const register = async (req, res) => {
   try {
-    console.log("📌 Register API called");
+    console.log("Register API called");
     const { name, email, password } = req.body;
 
     if (!name) return res.status(400).json({ message: "Name is required" });
