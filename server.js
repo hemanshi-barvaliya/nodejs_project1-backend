@@ -15,6 +15,8 @@ import messagesRouter from "./routes/messages.js";
 import setupSocket from "./setupSocket.js";
 import upload from "./middleware/upload.js";
 import { v2 as cloudinary } from "cloudinary";
+import aiRoutes from "./routes/aiRoutes.js";
+
 
 
 
@@ -53,7 +55,7 @@ app.post("/api/upload", upload.single("image"), async (req, res) => {
 app.use("/api/auth", authRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/messages", messagesRouter);
-
+app.use("/api/ai", aiRoutes);
 
 const httpServer = http.createServer(app);
 setupSocket(httpServer);
